@@ -1,0 +1,90 @@
+import requests
+import re
+
+from db_config import *
+
+headers = {
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.78 Safari/537.36'
+}
+
+def get_city_id():  #  获取2345网址的城市对应的ID
+    url = 'https://tianqi.2345.com/js/citySelectData.js'
+    html = requests.get(url, headers=headers)
+    new_html = html.text.replace(',', '|').replace(' -', '-')
+    city_datas = re.compile('provqx\[\d+]=\[(.*?)]').findall(new_html)
+    for city_data in city_datas:
+        city_ids = city_data.split('|')
+        for city_id in city_ids:
+            id_dict = {
+                'id':city_id.split(' ')[0].split('-')[0].replace('\'', ''),  # 城市对应的id
+                'zimu':city_id.split(' ')[1].split('-')[0],  # 首字母
+                'city':city_id.split(' ')[1].split('-')[0],  # 城市名称
+                'ID2':city_id.split(' ')[1].split('-')[1].replace('\'', ''),  # 城市的对应上级ID
+            }
+            city_id_table.insert(id_dict)
+            print(id_dict)
+
+def read_db_data():
+    id_datas = city_id_table.find()
+    for id_data in id_datas:
+        yield id_data['id'],id_data['city']
+
+def writer_db(response):
+    data = response.text.split('=')[1]
+    # print(data)
+    city = re.compile("city:'(.*?)',").findall(data)[0]
+    times = re.compile("ymd:'(.*?)',").findall(data)
+    bWendus = re.compile("bWendu:'(.*?)',").findall(data)
+    yWendus = re.compile("yWendu:'(.*?)',").findall(data)
+    tianqis = re.compile("tianqi:'(.*?)',").findall(data)
+    fengxiangs = re.compile("fengxiang:'(.*?)',").findall(data)
+    if 'aqi' in data:
+        fenglis = re.compile("fengli:'(.*?)',").findall(data)
+        aqiInfos = re.compile("aqiInfo:'(.*?)',").findall(data)
+    else:
+        fenglis = re.compile("fengli:'(.*?)'},").findall(data)
+        aqiInfos = ['无']*len(fenglis)
+
+    for time, bWendu, yWendu, tianqi, fengxiang, fengli, aqiInfo in zip(times, bWendus, yWendus, tianqis, fengxiangs,fenglis,aqiInfos):
+        weather_dic = {
+            'city': city,
+            'date': time,
+            'bWendu': bWendu,
+            'yWendu': yWendu,
+            'tianqi': tianqi,
+            'fengxiang': fengxiang,
+            'fengli': fengli,
+            'aqiInfo': aqiInfo,
+        }
+        city_weather_table.insert(weather_dic)
+        # hangzhou_weather_table.insert(weather_dic)
+        print(weather_dic)
+
+def get_weather_data(date,city_id):
+    try:
+        url = 'http://tianqi.2345.com/t/wea_history/js/{}/{}_{}.js'.format(date, city_id, date)
+        response = requests.get(url,headers=headers)
+        if response.status_code == 200:
+            writer_db(response)
+        else:
+            if date[-2] == '0':
+                new_date = ''.join(list(date)[:4]) + list(date)[-1]
+            else:
+                new_date = date
+
+            new_url = 'https://tianqi.2345.com/t/wea_history/js/{}_{}.js'.format(city_id,new_date)
+            # print(new_url)
+            response2 = requests.get(new_url,headers=headers)
+            writer_db(response2)
+    except Exception as e:
+        print(e)
+
+
+# city_id = '58457'
+
+id_data = read_db_data()
+for id,city in id_data:
+    print(city,id)
+    for date in date_list:
+        get_weather_data(date,id)
+
